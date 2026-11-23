@@ -1,0 +1,3 @@
+CREATE USER IF NOT EXISTS 'realtime'@'%' IDENTIFIED BY 'realtime_password';
+GRANT ALL PRIVILEGES ON *.* TO 'realtime'@'%' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
