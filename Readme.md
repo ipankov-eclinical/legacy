@@ -22,15 +22,21 @@ the same time.
   during the image build. Access to `soms-libs-mirror` is granted separately
   from `phpcommon`.
 - A gzipped baseline SQL dump (with no `CREATE DATABASE` / `USE` statements).
-  By default the stack uses the eISF one at `../eisf/docker/db/baseline.sql.gz`.
+  It isn't part of this repo. Point `LEGACY_BASELINE` at it (see step 3).
 
-## 1. Clone SOMS
-
-Clone SOMS into `legacy/soms`. The directory is gitignored here, and the build
-expects it at that path.
+## 1. Clone this repo
 
 ```bash
+git clone https://github.com/ipankov-eclinical/legacy.git
 cd legacy
+```
+
+## 2. Clone SOMS
+
+Clone SOMS into `soms/` inside this repo. The directory is gitignored, and the
+build expects it at that path.
+
+```bash
 git clone git@github.com:RealTime-Software-Solutions/soms.git soms
 cd soms
 git checkout <branch>        # e.g. main, develop, release/v4.50.0
@@ -46,7 +52,7 @@ git clone https://github.com/RealTime-Software-Solutions/soms.git soms
 You don't need a recursive clone: `composer install` fetches `phpcommon`
 during the image build.
 
-## 2. Configure
+## 3. Configure
 
 ```bash
 cp .env.example .env
@@ -57,7 +63,7 @@ Then edit `.env`:
 | Variable           | Default                             | Meaning                                                                    |
 | ------------------ | ----------------------------------- | -------------------------------------------------------------------------- |
 | `GITHUB_TOKEN`     | (empty)                             | Token for the build. If empty, `up.sh` falls back to `../.env`, then `../eisf/docker/.env`. |
-| `LEGACY_BASELINE`  | `../eisf/docker/db/baseline.sql.gz` | Dump to seed the DB from, relative to `legacy/`.                           |
+| `LEGACY_BASELINE`  | `../eisf/docker/db/baseline.sql.gz` | Dump to seed the DB from, absolute or relative to this repo. The default only works when this repo sits next to an `eisf/` checkout that has the dump. |
 | `LEGACY_SOMS_PORT` | `8081`                              | Host port for SOMS.                                                        |
 | `LEGACY_DB_PORT`   | `3307`                              | Host port for MariaDB (bound to 127.0.0.1).                                |
 
@@ -68,7 +74,7 @@ curl -H "Authorization: token $GITHUB_TOKEN" \
   https://api.github.com/repos/RealTime-Software-Solutions/soms-libs-mirror
 ```
 
-## 3. Start
+## 4. Start
 
 ```bash
 ./up.sh
