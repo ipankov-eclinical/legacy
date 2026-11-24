@@ -26,12 +26,23 @@ services:
       # First start imports the baseline before the server accepts TCP connections.
       start_period: 60m
 
-  legacy-soms:
+  # The unmodified SOMS image, built from soms/.docker/pr-image/Dockerfile.
+  # Build-only (never started): legacy-soms layers docker/soms/Dockerfile on top.
+  legacy-soms-base:
     build:
       context: ./soms
       dockerfile: .docker/pr-image/Dockerfile
       secrets:
         - composer_auth
+        - design_system_token
+    image: legacy-soms-base
+    scale: 0
+
+  legacy-soms:
+    build:
+      context: ./docker/soms
+      additional_contexts:
+        base: service:legacy-soms-base
     image: legacy-soms
     container_name: legacy-soms
     environment:
@@ -58,6 +69,8 @@ services:
 secrets:
   composer_auth:
     file: ./docker/secrets/composer_auth
+  design_system_token:
+    file: ./docker/secrets/design_system_token
 
 volumes:
   db_data:

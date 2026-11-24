@@ -80,9 +80,24 @@ curl -H "Authorization: token $GITHUB_TOKEN" \
 ./up.sh
 ```
 
-`up.sh` writes the token to `docker/secrets/composer_auth` (gitignored), builds
-the SOMS image, starts both containers and prints their status. Extra arguments
-are passed through to `docker compose up`.
+`up.sh` writes the token to `docker/secrets/composer_auth` and
+`docker/secrets/design_system_token` (both gitignored), builds the SOMS image,
+starts both containers, runs the SOMS Phinx migrations and prints their status.
+Extra arguments are passed through to `docker compose up`.
+
+The SOMS image is built in two steps. `legacy-soms-base` is the unmodified
+image from `soms/.docker/pr-image/Dockerfile` and is never started.
+`docker/soms/Dockerfile` then adds the document tools uploads need:
+LibreOffice, Ghostscript, qpdf, poppler, msgconvert and PEAR `Mail_mimeDecode`
+for `.msg` files. It also creates the paths SOMS hardcodes,
+`/home/realtime/bin/gs` and `/usr/local/bin/msgconvert`. This way uploads work
+whichever `soms` branch is checked out.
+
+**Migrations run on every `up.sh`.** The baseline export is older than recent
+`soms` branches, and a missing column makes every document upload fail with a
+generic error. `up.sh` brings the schema up to the checked-out branch. Some
+migrations drop columns, so after migrating for a newer branch an older one
+may break until you re-seed with `./down.sh -v`.
 
 **The first start is slow.** MariaDB imports the baseline before it reports
 healthy, and SOMS waits for that. The import skips `auditGeneric` /
@@ -132,11 +147,15 @@ mysql -h 127.0.0.1 -P 3307 -u root -proot soms        # root
 
 - **The build fails with a generic composer auth error**: the token most likely
   can't read `soms-libs-mirror`. Use the `curl` check above.
-- **The build fails with `design_system_token secret is empty`**: SOMS branches
-  that include EDOCS-1448 (#6979, which adds `@realtime/design-system`) need a
-  second BuildKit secret, `design_system_token`. `docker-compose.yml` and
-  `up.sh` don't provide it yet, so those branches can't be built by this stack
-  as it stands.
+- **The build fails at `yarn-install-private`**: SOMS branches that include
+  EDOCS-1448 (#6979) install `@realtime/design-system` from the private
+  `RealTime-Software-Solutions/rt-design-system` repo. `up.sh` passes the same
+  `GITHUB_TOKEN` as the `design_system_token` secret, so the token needs read
+  access to that repo too.
+- **An upload fails with "An unexpected error was encountered"**: check
+  `logs/all.log` in the container. `[Returned 127]` means a converter binary is
+  missing from the image. `Unknown column` means migrations haven't run, so run
+  `./up.sh` again.
 - **SOMS connects to the wrong DB or path**: gitignored local config in your
   `soms/` checkout (`scripts/client_config.php`, `app/config/database.php`,
   `app/config/session.php`) is copied into the image and wins over what the

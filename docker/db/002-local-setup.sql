@@ -8,3 +8,7 @@ WHERE UserName = 'admin';
 INSERT INTO tblConfigurationOption (OptionID, OptionDescription, OptionValue)
 VALUES ('documents.eisf_enabled', 'Enable eISF document shell', '0')
 ON DUPLICATE KEY UPDATE OptionValue = VALUES(OptionValue);
+
+-- Keep idle sessions alive for 24h (default 1200s). Read once per session into
+-- $_SESSION['IDLE_TIMEOUT'], so it applies to sessions started after the change.
+UPDATE tblConfiguration SET IdleTimeout = 86400 WHERE ConfigID = 1;
