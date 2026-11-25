@@ -32,6 +32,9 @@ services:
     build:
       context: ./soms
       dockerfile: .docker/pr-image/Dockerfile
+      args:
+        # Keep node_modules in the image so js.sh can run webpack in the container.
+        KEEP_JS_DEPS: '1'
       secrets:
         - composer_auth
         - design_system_token
@@ -43,6 +46,10 @@ services:
       context: ./docker/soms
       additional_contexts:
         base: service:legacy-soms-base
+      labels:
+        # Hash of the dependency files the image was built from (set by up.sh). up.sh
+        # rebuilds only when it no longer matches the checkout.
+        legacy.deps-hash: ${LEGACY_DEPS_HASH:-}
     image: legacy-soms
     container_name: legacy-soms
     environment:
@@ -56,6 +63,14 @@ services:
         condition: service_healthy
     volumes:
       - ./docker/soms/http.conf:/etc/nginx/conf.d/default.conf:ro
+      # The checkout is mounted over the code baked into the image, so PHP edits are live.
+      # Dependencies stay in named volumes, filled from the image the first time they're
+      # mounted; up.sh drops them whenever it rebuilds the image.
+      - ./soms:/srv/http/ctms/soms
+      - soms_vendor:/srv/http/ctms/soms/vendor
+      - soms_node_modules:/srv/http/ctms/soms/node_modules
+      - soms_esource_node_modules:/srv/http/ctms/soms/app/js/esource/node_modules
+      - soms_web_integration_node_modules:/srv/http/ctms/soms/app/js/web-integration/node_modules
       - soms_sessions:/srv/http/ctms/soms/sessions
       - soms_documents:/srv/http/ctms/soms/documents
     ports:
@@ -74,5 +89,9 @@ secrets:
 
 volumes:
   db_data:
+  soms_vendor:
+  soms_node_modules:
+  soms_esource_node_modules:
+  soms_web_integration_node_modules:
   soms_sessions:
   soms_documents:

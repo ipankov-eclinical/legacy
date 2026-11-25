@@ -80,10 +80,22 @@ curl -H "Authorization: token $GITHUB_TOKEN" \
 ./up.sh
 ```
 
-`up.sh` writes the token to `docker/secrets/composer_auth` and
-`docker/secrets/design_system_token` (both gitignored), builds the SOMS image,
-starts both containers, runs the SOMS Phinx migrations and prints their status.
+`up.sh` starts both containers, runs the SOMS Phinx migrations and prints their
+status. On the first start it also builds the SOMS image and the JS bundles.
 Extra arguments are passed through to `docker compose up`.
+
+The `soms/` checkout is **bind-mounted** into the container, so the image only
+holds what the checkout doesn't: `vendor/`, the `node_modules/` directories, the
+OS packages and the entrypoint. `up.sh` hashes the files those come from
+(`composer.json`/`.lock`, the three `package.json`/`yarn.lock` pairs, the
+Dockerfiles and the entrypoint) and rebuilds the image only when the hash differs
+from the one stored on the image. A rebuild writes the token to
+`docker/secrets/composer_auth` and `docker/secrets/design_system_token` (both
+gitignored) and drops the `vendor`/`node_modules` volumes so they're refilled from
+the new image.
+
+- `./up.sh --build`: force a rebuild, e.g. after changing `docker-compose.yml`.
+- `./up.sh --no-build`: never rebuild, even if dependencies changed.
 
 The SOMS image is built in two steps. `legacy-soms-base` is the unmodified
 image from `soms/.docker/pr-image/Dockerfile` and is never started.
@@ -115,12 +127,30 @@ Then open http://localhost:8081/soms/ and log in as `admin` / `password`.
 
 ## Day-to-day
 
-**PHP / JS changes**: the SOMS code is **baked into the image**, not mounted.
-Run `./up.sh` again to rebuild after you edit or switch branches:
+**PHP changes** are live: `soms/` is mounted into the container, so just reload
+the page. New classes are found through Composer's PSR-4 autoloader, so no
+`dump-autoload` is needed.
+
+**JS changes**: the bundles are gitignored build output in `soms/`, built inside
+the container by `js.sh`:
+
+```bash
+./js.sh                       # production build of main + esource (what the image builds)
+./js.sh esource               # only some targets: main, esource, web-integration
+./js.sh --dev main            # development build, faster and unminified
+./js.sh --watch esource       # rebuild on save, one target, Ctrl-C to stop
+```
+
+`main` is the root `yarn build` (webpack, then grunt for `scripts/build.min.js`
+and `styles/build.min.css`). `--watch main` runs only the webpack part; run
+`./js.sh --dev main` to refresh the grunt bundles.
+
+**Switching branches**:
 
 ```bash
 cd soms && git checkout <other-branch> && cd ..
-./up.sh
+./up.sh        # rebuilds the image only if the branch has different dependencies
+./js.sh        # the JS bundles in soms/ are from the previous branch
 ```
 
 **Stop**:
@@ -130,10 +160,10 @@ cd soms && git checkout <other-branch> && cd ..
 ./down.sh -v     # stop and drop the volumes; the next start re-seeds from the baseline
 ```
 
-**Logs**: the SOMS application log is inside the container:
+**Logs**: the SOMS application log is written to the checkout:
 
 ```bash
-docker exec legacy-soms tail -f /srv/http/ctms/soms/logs/all.log
+tail -f soms/logs/all.log
 ```
 
 **Database**:
@@ -158,9 +188,14 @@ mysql -h 127.0.0.1 -P 3307 -u root -proot soms        # root
   `./up.sh` again.
 - **SOMS connects to the wrong DB or path**: gitignored local config in your
   `soms/` checkout (`scripts/client_config.php`, `app/config/database.php`,
-  `app/config/session.php`) is copied into the image and wins over what the
+  `app/config/session.php`) is mounted into the container and wins over what the
   entrypoint generates. Remove it, or point it at `legacy-db` / `soms` /
-  `soms_pass`.
+  `soms_pass`. On first start the entrypoint writes the first two into
+  `soms/` itself, already pointing at `legacy-db`.
+- **The page loads without styles or scripts**: the JS bundles in `soms/` are
+  missing or from another branch. Run `./js.sh`.
+- **`Class not found` or a missing package after switching branches**: the
+  dependency volumes are older than the branch. Run `./up.sh --build`.
 - **The DB never turns healthy**: check `docker compose --env-file .env logs
   legacy-db`. The baseline must be gzipped and must not contain `CREATE
   DATABASE` / `USE` statements.
