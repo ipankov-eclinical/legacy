@@ -21,7 +21,7 @@ Facts that shape the approach:
 - `Record` audits a delete by primary key and a bulk `where()->delete()` on an `IAuditable` model, and audits `save()` as `'U'` with old and new values. `DocumentSignature` is `IAuditable`, so anything routed through the model is audited with the acting user, IP and URL. Only `raw()->query()` escapes this.
 - The DoA audit triggers (EDOCS-1434) cover only the ten `tblDocumentDelegationLog*` tables. `tblDocumentSignature` has no trigger.
 - `DateCancelled` already exists on `tblDocumentSignature`. eConsent partial signing (`documents.php` L5254-5258) already cancels a request with `DateCancelled = now`, `Deleted = 1` and `save()`.
-- SOMS reads hide removed rows with `Deleted = 0` and ignore `DateCancelled`, apart from the expiry reminder query. eisf reads filter on both `Deleted = 0` and `DateCancelled IS NULL`.
+- SOMS reads hide removed rows with `Deleted = 0` and ignore `DateCancelled`, apart from the expiry reminder query.
 - Edit signers is mark-and-sweep. Every save marks every unsigned row deleted, revives the ones still listed, then hard-deletes the rest. The Sign-on-the-Line lookup runs after the sweep, so it finds no rows and never deactivates anything. The make-non-signable branch has the order right.
 - In the signer loop, the existing-request lookup is `DocumentID = ? AND UserID = ?` with no `Deleted` or `CartID` filter. Re-adding a removed signer creates a new request today only because the old row was destroyed.
 - `ItemSelector.jsx` always renders a remove button for each selected row and has no per-row switch. It is shared by six components.
@@ -37,7 +37,6 @@ Facts that shape the approach:
 - No DB trigger on `tblDocumentSignature` (see D1).
 - No data cleanup. The orphan report is read-only, and cleanup is a separate ticket.
 - No change to the cart paths: they are already guarded and audited.
-- eisf: its signer cancel (`documentRepository.ts` ~L429) sets `DateCancelled` but not `Deleted = 1`, so SOMS reads would still show an eisf-cancelled signer as pending. This is a cross-system defect for a follow-up ticket, not this one. This change only makes SOMS treat `DateCancelled IS NOT NULL` rows as not live in the paths it touches.
 - eConsent paths (`EConsent::deactivate()`, `EConsent::setupDocumentSignatures()`). Out of scope by ticket decision. They move to a separate ticket for the Engage team.
 
 ## Decisions
@@ -57,7 +56,7 @@ New service in `app/Service/Signing/` (namespace `CTMS\App\Service\Signing`), sp
 - **Request remover**: cancels one row in place through the model (D7), and refuses a row with `DateSigned` set by throwing a `LogicException`, as defence in depth.
 
 `Document::afterSave()` calls the service for both branches. For `Signable == 0`, every live unsigned row goes to `toRemove`.
-*Why:* revival via audited `save()` would write two `'U'` rows per kept signer on every save, which floods the audit trail. The diff only touches rows that change. eisf already works this way.
+*Why:* revival via audited `save()` would write two `'U'` rows per kept signer on every save, which floods the audit trail. The diff only touches rows that change.
 *Alternative:* keep mark-and-sweep and only swap the final raw delete for an audited delete. Rejected: it keeps the revive dance and the Sign-on-the-Line ordering bug.
 
 ### D3. Existing-request lookup ignores removed rows
@@ -75,7 +74,7 @@ This path does not use the D2 request remover, because the decision here is to d
 `ItemSelector` gets an optional `canRemoveItem(item)` prop that defaults to always true, so the other five users are unchanged. `DocumentForm` passes `item => !(item.signer && item.signer.DateSigned)`. The server rule (D2) still holds if a tampered form drops a signed signer.
 
 ### D7. Signer removal cancels in place
-Confirmed on the ticket (OQ1 = A). Removing an unsigned signer by editing the signer list or by making the document non-signable **cancels the request in place**: `DateCancelled = UTC now`, `Deleted = 1`, `save()`. `Record` audits it as `'U'` with old and new values, the acting user and the time. It keeps the row as evidence, matches the eConsent precedent, and is hidden by both SOMS (`Deleted`) and eisf (both columns) reads. A cancelled request is never reopened. Re-adding the signer creates a new row (D3).
+Confirmed on the ticket (OQ1 = A). Removing an unsigned signer by editing the signer list or by making the document non-signable **cancels the request in place**: `DateCancelled = UTC now`, `Deleted = 1`, `save()`. `Record` audits it as `'U'` with old and new values, the acting user and the time. It keeps the row as evidence and matches the eConsent precedent. Every SOMS cancellation sets both columns, so reads that filter `Deleted = 0` hide it. The paths this change touches also check `DateCancelled IS NULL`, because a request with a cancellation date is cancelled by definition. A cancelled request is never reopened. Re-adding the signer creates a new row (D3).
 
 ### D8. Orphan investigation is a read-only report
 SQL is run against staging with the read-only account, and results are attached to the ticket. Categories:
@@ -85,7 +84,6 @@ SQL is run against staging with the read-only account, and results are attached 
 4. Evidence of destroyed signed rows:
    - `auditGeneric` `'D'` rows on `tblDocumentSignature` whose recorded `DateSigned` is non-null (Delete Study path).
    - Documents with a signed file or hash but no signed signature row (edit-signers path, which left no audit trace).
-5. eisf-cancelled rows (`DateCancelled IS NOT NULL AND Deleted = 0`) that SOMS still treats as live. This sizes the eisf follow-up.
 
 ## Risks / Trade-offs
 

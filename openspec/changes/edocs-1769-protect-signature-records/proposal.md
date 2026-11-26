@@ -38,5 +38,4 @@ The open questions were answered on the ticket on 2026-11-25 (see `design.md`, "
 - `soms/app/comp/DocumentForm.jsx`, `soms/app/comp/ItemSelector.jsx` (shared by 6 components): per-row remove control.
 - Not `soms/app/models/CTMS/EConsent/EConsent.php`: the eConsent paths are out of scope (separate Engage team ticket).
 - No schema change: `DateCancelled` and `Deleted` already exist on `tblDocumentSignature`.
-- eisf: no code change. Its signature reads already filter `Deleted = 0 AND DateCancelled IS NULL`.
 - Data: a read-only SQL report to be run on staging. No data fix in this change.

@@ -42,11 +42,11 @@ When an unsigned signature request is removed by editing the document's signer l
 - **AND** the audit trail contains an entry for User B's request recording the acting user and the time
 
 ### Requirement: A removed signature request is no longer actionable
-After an unsigned signature request is removed, the signer SHALL NOT see it as pending and SHALL NOT receive reminders for it, in SOMS or in eISF. The removed request SHALL NOT be listed as a signer on the document form, SHALL NOT be signable, and SHALL NOT be counted in signing notifications.
+After an unsigned signature request is removed, the signer SHALL NOT see it as pending and SHALL NOT receive reminders for it. The removed request SHALL NOT be listed as a signer on the document form, SHALL NOT be signable, and SHALL NOT be counted in signing notifications.
 
 #### Scenario: Removed signer's pending list
 - **GIVEN** User B's pending request on a document was removed
-- **WHEN** User B opens their pending signatures in SOMS or eISF
+- **WHEN** User B opens their pending signatures
 - **THEN** that document is not listed for User B
 - **AND** the request is not counted in User B's pending signature count
 

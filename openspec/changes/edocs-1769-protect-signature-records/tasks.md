@@ -10,14 +10,14 @@ All code paths are in `soms/` on `release/SOMS-2027.1.0.0`. Run commands from `s
 
 ## 2. Signer-list differ (pure logic)
 
-- [ ] 2.1 Add the signer-list differ in `app/Service/Signing/` (namespace `CTMS\App\Service\Signing`). Given the live rows and the submitted signer IDs and statements, it returns `toRemove`, `toUpdateStatement` and `toAdd`. Rows with `DateSigned` set are never in `toRemove`, and the statement of a signed row is never changed. Verify: `vendor/bin/phpunit tests/php/Unit/App/Service/Signing/<Differ>Test.php` covers signed-not-listed, pending-not-listed, pending-kept-with-new-statement, new signer, and an empty list (non-signable).
-- [ ] 2.2 Treat signer IDs below 1 as absent, matching today's loop. Verify: unit test case in the same file.
+- [x] 2.1 Add the signer-list differ in `app/Service/Signing/` (namespace `CTMS\App\Service\Signing`). Given the live rows and the submitted signer IDs and statements, it returns `toRemove`, `toUpdateStatement` and `toAdd`. Rows with `DateSigned` set are never in `toRemove`, and the statement of a signed row is never changed. Verify: `vendor/bin/phpunit tests/php/Unit/App/Service/Signing/<Differ>Test.php` covers signed-not-listed, pending-not-listed, pending-kept-with-new-statement, new signer, and an empty list (non-signable).
+- [x] 2.2 Treat signer IDs below 1 as absent, matching today's loop. Verify: unit test case in the same file.
 
 ## 3. Request reading and removal
 
-- [ ] 3.1 Add the live-request reader: non-cart (`CartID = 0`), non-sheet (`DateSheetSignature IS NULL`), `Deleted = 0`, `DateCancelled IS NULL`. Verify: integration test under `tests/php/Integration/Services/` seeds live, cancelled, deleted, cart and sheet rows and gets only the live ones back (run locally against the docker DB, since this suite is excluded from CI).
-- [ ] 3.2 Add the request remover. It operates on a `DocumentSignature` instance and throws `LogicException` for a row with `DateSigned` set. Verify: unit test asserts the throw and asserts that no write happens.
-- [ ] 3.3 Implement the removal as cancel in place (D7): `DateCancelled = UTC now`, `Deleted = 1`, `save()`. Verify: integration test asserts that the row still exists with `DateCancelled` set and `Deleted = 1`, and that there is a `'U'` `auditGeneric` entry for `tblDocumentSignature` with the acting user ID and timestamp.
+- [x] 3.1 Add the live-request reader: non-cart (`CartID = 0`), non-sheet (`DateSheetSignature IS NULL`), `Deleted = 0`, `DateCancelled IS NULL`. Verify: integration test under `tests/php/Integration/Services/` seeds live, cancelled, deleted, cart and sheet rows and gets only the live ones back (run locally against the docker DB, since this suite is excluded from CI).
+- [x] 3.2 Add the request remover. It operates on a `DocumentSignature` instance and throws `LogicException` for a row with `DateSigned` set. Verify: unit test asserts the throw and asserts that no write happens.
+- [x] 3.3 Implement the removal as cancel in place (D7): `DateCancelled = UTC now`, `Deleted = 1`, `save()`. Verify: integration test asserts that the row still exists with `DateCancelled` set and `Deleted = 1`, and that there is a `'U'` `auditGeneric` entry for `tblDocumentSignature` with the acting user ID and timestamp.
 
 ## 4. Delete Study
 
@@ -47,16 +47,15 @@ All code paths are in `soms/` on `release/SOMS-2027.1.0.0`. Run commands from `s
 
 ## 8. Orphan investigation report (read-only)
 
-- [ ] 8.1 Write the read-only SQL for the five categories in design D8, kept in this change folder as `orphan-report.sql`. Verify: each query runs without error against the local docker DB.
+- [ ] 8.1 Write the read-only SQL for the four categories in design D8, kept in this change folder as `orphan-report.sql`. Verify: each query runs without error against the local docker DB.
 - [ ] 8.2 Run the report on staging with the read-only account for the agreed sites, and attach the counts and a sample of IDs to EDOCS-1769 as input for a cleanup ticket. Verify: comment on the ticket with the results.
 
 ## 9. Integration checks
 
 - [ ] 9.1 Static checks and CI suites pass: `composer test:unit`, `composer analyze`, `composer phpcs`, `npm test`.
-- [ ] 9.2 Run the ticket's steps on the local docker stack (`bash docker/up.sh` from `legacy/`), including Delete Study. Confirm `tblDocumentSignature` and `auditGeneric` match the spec scenarios, that a removed signer no longer appears as pending in eISF (open eDocs from the study), and that a removed signer no longer appears in the document form's signer list (R1).
+- [ ] 9.2 Run the ticket's steps on the local stack (`./up.sh` from `legacy/`), including Delete Study. Confirm `tblDocumentSignature` and `auditGeneric` match the spec scenarios, and that a removed signer no longer appears as pending in SOMS or in the document form's signer list (R1).
 
 ## Workflow follow-up
 
-- Raise a follow-up ticket: the eisf signer cancel sets `DateCancelled` without `Deleted = 1`, so SOMS still shows those signers as pending (design Non-Goals; size it with report category 5).
 - eConsent ticket for the Engage team (OQ3 out of scope): `EConsent::deactivate()` and `EConsent::setupDocumentSignatures()` destroy signed rows. Christopher Wilk (or the team) creates it, and Nathan Levens notifies the Engage team. It needs a product decision on what happens to existing signatures when eConsent is deactivated.
 - Archive the change after the SOMS PR merges.

@@ -19,10 +19,16 @@ Two slash commands in `.claude/commands/` handle commits. Both take an optional 
 
 `soms/` is a **separate git repo** (gitignored here) with its own branches. Run git commands for it as `git -C soms <cmd>` and check which repo you are in before any git command. The OpenSpec tasks name the SOMS branch they target, e.g. `release/SOMS-2027.1.0.0`.
 
-## Local stack (this repo, not the eisf one)
+## Scope: SOMS only
 
-This stack differs from `eisf/docker`:
-- SOMS: http://localhost:8081/soms/ (`admin` / `password`). MariaDB: `127.0.0.1:3307`, database `soms`, user `soms` / `soms_pass`, root password `root`. eISF is **off** (`documents.eisf_enabled = 0`), so SOMS serves eDocs itself.
+This setup is legacy SOMS on its own. SOMS serves eDocs itself, and nothing else runs alongside it. Work here as if SOMS were the whole system:
+- Don't mention eISF, or any SOMS ↔ eISF integration, in code, comments, tests, commit messages, OpenSpec artifacts or docs written in this setup. Don't plan or verify anything against eISF here.
+- Don't let eISF factor into decisions here: design choices, scope and trade-offs are judged on SOMS alone.
+- The parent folder (`../`) has a different setup where SOMS and eISF run together. Its CLAUDE.md describes that setup, and it doesn't apply in `legacy/`.
+
+## Local stack
+
+- SOMS: http://localhost:8081/soms/ (`admin` / `password`). MariaDB: `127.0.0.1:3307`, database `soms`, user `soms` / `soms_pass`, root password `root`.
 - `soms/` is **bind-mounted**, so PHP edits are live with no rebuild. `vendor/` and the `node_modules/` directories live only in Docker volumes and are not on the host, so run PHP and JS tooling inside the `legacy-soms` container.
 - `./up.sh` starts the stack. It rebuilds the image only when dependency files change (`--build` forces a rebuild) and runs Phinx migrations on every start. `./down.sh` stops it, and `./down.sh -v` also drops the DB so the next start re-seeds. `./js.sh [--dev|--watch] [main|esource|web-integration]` rebuilds the JS bundles.
 - The app log is `soms/logs/all.log`.
