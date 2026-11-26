@@ -26,7 +26,7 @@ A signature record that has been signed SHALL remain stored and SHALL keep its s
 - **THEN** User A's signature record still exists with its signed state unchanged
 
 ### Requirement: Removing an unsigned signer cancels the request and is audited
-When an unsigned signature request is removed by editing the document's signer list or by making the document non-signable, the request SHALL be kept as a cancelled request with its cancellation date, not permanently deleted. The cancellation SHALL produce an audit trail entry that identifies the document, the signer whose request was cancelled, the user who performed the removal, and when it happened.
+When an unsigned signature request is removed by editing the document's signer list or by making the document non-signable, the request SHALL be kept as a cancelled request with its cancellation date, not permanently deleted, until the signer is added back (see "Re-adding a removed signer creates a new request"). The cancellation SHALL produce an audit trail entry that identifies the document, the signer whose request was cancelled, the user who performed the removal, and when it happened.
 
 #### Scenario: Pending signer removed from the signer list
 - **GIVEN** a document with pending signature requests for User A and User B
@@ -75,14 +75,15 @@ After an unsigned signature request is removed, the signer SHALL NOT see it as p
 - **AND** User Y is not
 
 ### Requirement: Re-adding a removed signer creates a new request
-When a signer whose earlier request was removed is added to the document's signers again, the system SHALL treat it as a new signature request: a new request date and a new request notification to the signer. The cancelled request SHALL NOT be reopened.
+When a signer whose earlier request was removed is added to the document's signers again, the system SHALL treat it as a new signature request: a new request date and a new request notification to the signer. The cancelled request SHALL NOT be reopened. It SHALL be permanently deleted, and the deletion SHALL be recorded in the audit trail with the request's values, the acting user and the time.
 
 #### Scenario: Signer removed then added back
 - **GIVEN** User B's pending request on a document was removed on day 1
 - **WHEN** a user adds User B back to the document's signers on day 2 and saves
 - **THEN** User B has a pending request dated day 2
 - **AND** User B is sent a new signature request notification
-- **AND** User B's request from day 1 is still cancelled
+- **AND** User B's request from day 1 no longer exists
+- **AND** the audit trail records its cancellation on day 1, and its deletion on day 2 with its values
 
 ### Requirement: Sign-on-the-Line placements follow signer removal
 When an unsigned signer is removed from a document, by editing the signer list or by making the document non-signable, that signer's Sign-on-the-Line placements on the document SHALL become inactive.
