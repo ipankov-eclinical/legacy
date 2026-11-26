@@ -38,12 +38,12 @@ Facts that shape the approach:
 - No data cleanup. The orphan report is read-only, and cleanup is a separate ticket.
 - No change to the cart paths: they are already guarded and audited.
 - eisf: its signer cancel (`documentRepository.ts` ~L429) sets `DateCancelled` but not `Deleted = 1`, so SOMS reads would still show an eisf-cancelled signer as pending. This is a cross-system defect for a follow-up ticket, not this one. This change only makes SOMS treat `DateCancelled IS NOT NULL` rows as not live in the paths it touches.
-- eConsent paths, unless OQ3 brings them in.
+- eConsent paths (`EConsent::deactivate()`, `EConsent::setupDocumentSignatures()`). Out of scope by ticket decision. They move to a separate ticket for the Engage team.
 
 ## Decisions
 
 ### D1. Audit through the model layer, not a trigger
-Removals go through `DocumentSignature` instances (`save()` or delete by PK, depending on OQ1), so `Record` writes the audit rows.
+Removals go through the `DocumentSignature` model, so `Record` writes the audit rows: signer removal cancels via `save()` (D7), and Delete Study uses the audited bulk delete (D5).
 *Alternative:* add `tblDocumentSignature` to `DoaAuditTables`. Rejected for four reasons:
 - A trigger records a delete but cannot prevent it, so the signed-row requirement would still need code.
 - It stretches a DoA-scoped mechanism to an unrelated table.
@@ -54,7 +54,7 @@ Removals go through `DocumentSignature` instances (`save()` or delete by PK, dep
 New service in `app/Service/Signing/` (namespace `CTMS\App\Service\Signing`), split along the team convention:
 - **Live-request reader**: loads the document's live non-cart, non-sheet requests (`CartID = 0`, `DateSheetSignature IS NULL`, `Deleted = 0`, `DateCancelled IS NULL`).
 - **Signer-list differ**: a pure function. Given the live rows and the submitted signer IDs and statements, it returns `toRemove` (unsigned rows whose user is not listed), `toUpdateStatement` and `toAdd`. Signed rows are never placed in `toRemove`. This is where the guard lives.
-- **Request remover**: applies the removal for one row through the model (OQ1 decides cancel vs. delete), and refuses a row with `DateSigned` set by throwing a `LogicException`, as defence in depth.
+- **Request remover**: cancels one row in place through the model (D7), and refuses a row with `DateSigned` set by throwing a `LogicException`, as defence in depth.
 
 `Document::afterSave()` calls the service for both branches. For `Signable == 0`, every live unsigned row goes to `toRemove`.
 *Why:* revival via audited `save()` would write two `'U'` rows per kept signer on every save, which floods the audit trail. The diff only touches rows that change. eisf already works this way.
@@ -66,14 +66,16 @@ When adding a signer, the "do they already have a request" check ignores rows th
 ### D4. Sign-on-the-Line deactivation driven by `toRemove`
 `SignOnTheLine::deactivate()` is called for each user in `toRemove`, in both branches. This fixes the ordering bug without a separate query.
 
-### D5. Delete Study never touches signed rows
-`Study::removeDocuments()` narrows its signature write to `DateSigned IS NULL`. What happens to those unsigned rows depends on OQ2. The provisional default is the same remover as D2. Signed rows stay attached to the soft-deleted document, and every reader already filters `tblDocument.Deleted = 0`.
+### D5. Delete Study deletes pending requests, never signed rows
+`Study::removeDocuments()` keeps its audited bulk delete (`DocumentSignature::factory()->where(…)->delete()`, which writes a `'D'` audit row per deleted row through `IAuditable`), narrowed to `DateSigned IS NULL`. Pending requests are permanently deleted with an audit entry, as today. Signed rows are never touched and stay attached to the soft-deleted document. Every reader already filters `tblDocument.Deleted = 0`.
+This path does not use the D2 request remover, because the decision here is to delete, not cancel. Its guard is therefore the `DateSigned IS NULL` condition in the `where()`, and an integration test pins it (task 4.1).
+*Why:* ticket decision (OQ2 = B). The documents are soft-deleted, so their pending requests are no longer actionable, and the audit entry keeps the evidence.
 
 ### D6. Opt-in per-row remove control
 `ItemSelector` gets an optional `canRemoveItem(item)` prop that defaults to always true, so the other five users are unchanged. `DocumentForm` passes `item => !(item.signer && item.signer.DateSigned)`. The server rule (D2) still holds if a tampered form drops a signed signer.
 
-### D7. Provisional default for OQ1: cancel in place
-Until the ticket answers, the plan assumes **cancel in place**: `DateCancelled = UTC now`, `Deleted = 1`, `save()`. It keeps the row as evidence, matches the eConsent precedent, and is hidden by both SOMS (`Deleted`) and eisf (both columns) reads. If OQ1 comes back as "audited delete", only the request remover changes. D2, D3 and D4 stay as they are.
+### D7. Signer removal cancels in place
+Confirmed on the ticket (OQ1 = A). Removing an unsigned signer by editing the signer list or by making the document non-signable **cancels the request in place**: `DateCancelled = UTC now`, `Deleted = 1`, `save()`. `Record` audits it as `'U'` with old and new values, the acting user and the time. It keeps the row as evidence, matches the eConsent precedent, and is hidden by both SOMS (`Deleted`) and eisf (both columns) reads. A cancelled request is never reopened. Re-adding the signer creates a new row (D3).
 
 ### D8. Orphan investigation is a read-only report
 SQL is run against staging with the read-only account, and results are attached to the ticket. Categories:
@@ -89,9 +91,42 @@ SQL is run against staging with the read-only account, and results are attached 
 
 - [Cart-row matching in the signer loop: a user with a pending cart request currently matches that cart row] → D3 keeps cart matching unchanged and only excludes removed rows. A regression test covers "signer with a pending cart request is added to document signers".
 - [Cancelled rows accumulate in `tblDocumentSignature`] → Every live-row query in the touched paths already filters `Deleted = 0`. Volume is bounded by how often signers are edited.
-- [Other SOMS reads that select signatures without a `Deleted` filter would now see cancelled rows that used to be destroyed] → Task 1.3 audits these reads, and any that matter are fixed in this change.
+- [Other SOMS reads that select signatures without a `Deleted` filter would now see cancelled rows that used to be destroyed] → Task 1.3 audited these reads (see "SOMS reads without a `Deleted` filter"). The ones marked "fix here" are fixed in this change.
 - [`ItemSelector` is shared] → The new prop is opt-in and defaults to the current behaviour. The existing `ItemSelector.test.js` is extended.
 - [DB-dependent PHP tests are excluded from CI] → The differ is pure and unit-tested in CI. The paths that touch the database are covered by integration tests run locally and by the manual steps from the ticket.
+
+## SOMS reads without a `Deleted` filter
+
+Audit of every SOMS read of `tblDocumentSignature` / `DocumentSignature` (task 1.3, `release/SOMS-2027.1.0.0`, line numbers as of 2026-11-26). Reads that already filter `Deleted = 0` are not listed. Most of them do, including the `DocumentSignature` model helpers, `SignatureRequests`, `DocumentStudies`, the Signature Status report, the signing services and queue payload, `SignOnTheLine`, `Cart::loadSigners()`, and the reminder crons.
+
+The rows this change newly keeps:
+
+- **Cancelled requests** (D7): `Deleted = 1`, `DateCancelled` set, `DateSigned IS NULL`, `CartID = 0`. These are new for the edit-signers and non-signable paths. Until now the only rows of this shape came from eConsent partial signing.
+- **Signed rows on documents soft-deleted by Delete Study** (D5). These are not new in kind: `Document::softDelete()` already leaves every signature row in place, so readers meet signed and pending rows on deleted documents today. No read is affected by this group.
+
+Never-signed cancelled rows can't affect reads that only select `DateSigned IS NOT NULL`. Cart-scoped reads (`CartID = <cart>`) can't see them either, since they have `CartID = 0`.
+
+| # | Read | What a cancelled row would do | Verdict |
+|---|---|---|---|
+| R1 | `Document::getSigners()` (`Document.php` L3420), which fills `_signers` / `_allSigners` in `afterFind` | The removed signer comes back in `DocumentForm` as a selected signer and is re-requested on the next save. They are also counted in `SignatureList.jsx` "N of M pending", and `PatientTracking` L1406 can pick them up. | **fix here** (task 6.1): `ds.Deleted = 0` |
+| R2 | `User::getTotalPendingSignatures()` (`User.php` L937): the push-notification `totalPendingNotifications` count | The removed request is counted as pending | **fix here** (task 6.3): `tblDocumentSignature.Deleted = 0` |
+| R3 | `DocumentUser::getSignees()` (`CTMS/SignOnTheLine/DocumentUser.php` L69): `LEFT JOIN` on doc+user, `CartID = 0` | Duplicate signee rows after remove and re-add, and the cancelled row's `Statement` is preselected in the Sign-on-the-Line viewer | **fix here** (task 6.4): `ds.Deleted = 0` in the join |
+| R4 | `GET /api/v1/documents/users/all` (`controllers/documents.php` L6549): `isCurrentUserSigned` from `first()` on doc+user | After remove, re-add and sign, `first()` can return the cancelled row, so a signed user is reported as not signed in the SOTL viewer | **fix here** (task 6.5): read through `DocumentSignature::findLiveRequest()` (`Deleted = 0`) |
+| R5 | `GET /api/v1/documents/signature-statements` (`controllers/api.php` L53): statement preselect on doc+user (mobile/Outlook) | Preselects the cancelled request's statement, which the client enforces when `lock_signature_statements` is on | **fix here** (task 6.5): read through `DocumentSignature::findLiveRequest()` |
+| R6 | `POST /documents/signatures`, non-cart branch (`controllers/documents.php` L3974), plus `DocumentSignature::validateCartSignature()` L402: both load the request by posted `ID` only | A stale page or crafted `ID` signs a cancelled request. Until now the row was destroyed, so there was nothing to sign. This breaks "A removed signature request is no longer actionable". | **fix here** (task 6.2): `validateSignature()` refuses when `Deleted = 1` or `DateCancelled IS NOT NULL`. This covers the non-cart branch only. `validateCartSignature()` stays as is because the cart sign paths share it (`api.php` L1263, `documents.php` L3886), and cart paths are a Non-Goal. |
+| R7 | `POST /documents/signatures`, all-parties notification (`controllers/documents.php` L4036): requesters with `AllPartiesNotification = 0` | A user whose only request was cancelled gets "Document Signed by All Parties", and the flag is written onto the cancelled row | **fix here** (task 6.6): read through a `DocumentSignature` finder with `Deleted = 0` |
+| R8 | `Document::getSignatureRequestDocDetails()` (`Document.php` L735): `LEFT JOIN`, latest `DateRequest` wins. Used by `notifyUser()` from `afterSave()` and the `DocSignatureExpiration` reminder cron. | A reminder can name the requester and date of a cancelled request | **fix here** (task 6.3): `tblDocumentSignature.Deleted = 0` in the join |
+| R9 | `Document::afterSave()` existing-request lookup (`Document.php` L2089) | Re-added signer matches the cancelled row | fix here: already task 5.3 (D3) |
+| R10 | `Document::afterSave()` post-sweep `Deleted = 1` lookup (`Document.php` L2122) | n/a | fix here: replaced by tasks 5.1 / 5.4 (D4) |
+| R11 | `Document::beforeSave()` signed-signature check (`Document.php` L1994) | Selects `DateSigned IS NOT NULL` only | unaffected |
+| R12 | `controllers/users.php` L47, L72: delegate and document signers | Select `DateSigned IS NOT NULL` only | unaffected |
+| R13 | `Cart::getBulkSignDocuments()` L194, `Cart::getDocumentSignatures()` L856, `controllers/carts.php` L343, `api.php` `loadSignatureRecord()` L1327, `controllers/audit.php` L74 | Scoped to a cart ID > 0 | unaffected |
+| R14 | `GET /documents/signature-statements` (`controllers/documents.php` L29): preselect by request `ID` + own `UserID` | The `ID` comes from the user's pending list, which filters `Deleted = 0`. A stale ID only preselects a statement, and signing is guarded by R6. | unaffected |
+| R15 | `AttachSignaturePages::prepareSignaturesPageData()` L112 / L124: back-fills `UserName` / `FullName` | Name fields only. Cancelled rows got them at creation (`populateUserFields()`). | unaffected |
+| R16 | Audit readers: `DocumentAuditRepository::signatureIDs()` L32, `AuditHelper::getDocumentSignatures()` L2051, `DocumentSignatureAuditor`, `User.php` L2897 | Including cancelled rows is what we want: their `'U'` cancellation entries appear in the document's audit trail | unaffected |
+| R17 | ICF/eConsent consent children: `PatientTracking::getDocumentSignatures()` L918, `PatientTracking::getCancelledDocuments()` L1073 (`tds.Deleted = 1` means "cancelled consent"), `documents.php` L5255 (partial signing), `EConsent.php` L873 / L1064 / L1261 and its `ds` joins | These read rows on patient consent child documents, which only the eConsent/ICF paths write (out of scope). Edit signers runs on the folder's version documents. If 9.2 shows edit signers can reach a consent child, `getCancelledDocuments()` would list it as a cancelled consent. | unaffected |
+
+Writes found along the way, for the record: `DocumentSignature::updateDateEmailReminder()` (L104) is a raw `UPDATE` keyed on user+document, so it also stamps `DateEmailReminder` on that user's cancelled rows. It is unaudited, harmless to reads, and left as is.
 
 ## Migration Plan
 
@@ -99,25 +134,12 @@ SQL is run against staging with the read-only account, and results are attached 
 - Deploys with the SOMS-2027.1.0.0 release. Rollback is a code revert. Rows cancelled in the meantime stay cancelled, and old code still hides them (`Deleted = 1`).
 - Run the orphan report before release so the cleanup ticket can be sized.
 
-## Open Questions
+## Ticket decisions
 
-**These block apply. They are written to be posted on EDOCS-1769, and each answer maps to a specific task.**
+The open questions were posted on EDOCS-1769 on 2026-11-24. Nathan Levens answered on 2026-11-25, after agreeing them with Jaime.
 
-**OQ1: How should removing an unsigned signer be recorded?** (task 3.3)
-> When a user removes a signer whose request is still pending (by editing the signer list or by making the document non-signable), SOMS currently deletes the request row permanently and writes no audit entry. Which behaviour do we want?
-> **A. Cancel the request (recommended):** keep the row, mark it cancelled with the date, and record who cancelled it and when in the audit trail. The request stays visible as history and can be reported on. eISF already handles removed signers this way.
-> **B. Delete with an audit entry:** keep deleting the row, but write an audit entry with all of its values, who removed it and when. The audit trail would then be the only evidence the request existed.
-> Either way, removing and later re-adding the same signer creates a new request with a new request date and notification.
+- **OQ1: How removing an unsigned signer is recorded → A, cancel the request and write an audit entry.** Removing and then re-adding the same signer creates a new request with a new request date and a new notification. The cancelled request is never reopened. → D7, D3, task 3.3.
+- **OQ2: What Delete Study does with signature records → B for pending requests.** Pending requests are permanently deleted with an audit entry. Signed signatures are no longer deleted and stay attached to the soft-deleted documents. → D5, task 4.2.
+- **OQ3: eConsent paths → out of scope.** They move to a separate ticket for the Engage team. Christopher Wilk (or the team) creates it, and Nathan notifies the Engage team. → Non-Goals.
 
-**OQ2: What should Delete Study do with signature records?** (task 4.2)
-> When a study is deleted, its documents are soft-deleted, but every signature record on them, signed or not, is permanently deleted (with an audit entry). The ticket says signed records must be kept. For **unsigned (pending)** requests on those documents, which behaviour do we want?
-> **A. Cancel them (recommended):** same as removing a signer (see OQ1). They are kept as cancelled and audited.
-> **B. Delete them:** permanently deleted with an audit entry, which is what happens today.
-> **C. Leave them as they are:** not touched. They are not actionable anyway because the document is deleted.
-> Please also confirm that signed records stay attached to the deleted study's documents, unchanged.
-
-**OQ3: Are the eConsent paths in scope for this ticket?** (task 6)
-> Two eConsent flows also permanently delete signature records without checking whether they are signed:
-> 1. **Deactivating eConsent on a document** clears the signed document and deletes every signature record on it, signed ones included.
-> 2. **Updating the eConsent signer list** deletes the record of any signer removed from the list, even one who has already signed.
-> Both write audit entries, but signed signatures are lost. Should EDOCS-1769 also protect signed records in these flows, or should they get a separate ticket? Flow 1 deliberately resets the document, so we need a product decision on what should happen to existing signatures when eConsent is deactivated.
+An earlier comment from Nathan (2026-11-17) asked that the form show no "X" for a signer who has signed (D6), and that removing a pending signer really cancel the request instead of leaving it hanging (D2, D4, D7, and categories 1–2 of the D8 report).
