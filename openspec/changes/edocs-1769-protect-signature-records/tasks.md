@@ -42,8 +42,8 @@ All code paths are in `soms/` on `release/SOMS-2027.1.0.0`. Run commands from `s
 
 ## 7. Document form UI
 
-- [ ] 7.1 Add an optional `canRemoveItem(item)` prop to `app/comp/ItemSelector.jsx` that defaults to removable. When it returns false, no remove button is rendered for that row. Verify: `npm test -- app/comp/ItemSelector.test.js` has cases for the default (button present) and for false (button absent).
-- [ ] 7.2 Pass `canRemoveItem` from `app/comp/DocumentForm.jsx` so signers with `DateSigned` have no remove control, while pending and newly selected signers keep it. Verify: a jest test for the signer selector covers all three rows, and on the docker stack the signed signer shows "(signed …)" with no X.
+- [x] 7.1 Add an optional `canRemoveItem(item)` prop to `app/comp/ItemSelector.jsx` that defaults to removable. When it returns false, no remove button is rendered for that row. Verify: `npm test -- app/comp/ItemSelector.test.js` has cases for the default (button present) and for false (button absent).
+- [x] 7.2 Pass `canRemoveItem` from `app/comp/DocumentForm.jsx` so signers with `DateSigned` have no remove control, while pending and newly selected signers keep it. Verify: a jest test for the signer selector covers all three rows, and on the docker stack the signed signer shows "(signed …)" with no X.
 
 ## 8. Orphan investigation report (read-only)
 
