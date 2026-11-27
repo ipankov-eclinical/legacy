@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Do not commit or push unless the user explicitly asks you to.** Finishing a task, passing tests or completing an OpenSpec task is not permission. Stage, commit and push only on an explicit request, and only in the repo the request names.
 
-Two slash commands in `.claude/commands/` handle commits. Both take an optional repo argument: empty means this repo, `soms` means the `soms/` repo.
+Three slash commands in `.claude/commands/` handle git. Each takes an optional repo argument: empty means this repo, `soms` means the `soms/` repo.
 - `/commit-message [soms]` writes a one-line message, `TICKET-123: <imperative summary>`, taking the ticket from the branch name. It never stages or commits.
 - `/commit-changes [soms]` runs `/commit-message`, then commits: it uses what is staged, or `git add -A` if nothing is. It refuses to stage likely-secret files, never pushes and never amends. Running it counts as an explicit request to commit, but not to push.
+- `/update-branch [soms] [base]` merges `origin/<base>` into the current branch: by default, the branch it was made from. It resolves conflicts, then checks how the incoming changes affect the branch's work and its OpenSpec change, and asks about any spec changes or merge decisions. Running it counts as an explicit request for that one merge commit. It never pushes, rebases or stashes, and it makes follow-up fixes only when asked.
 
 ## What this workspace is
 
